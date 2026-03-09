@@ -23,7 +23,7 @@ TermTracker reads Claude Code's JSONL conversation logs from `~/.claude/projects
 ## Install
 
 ```bash
-git clone https://github.com/yourusername/termtracker.git
+git clone https://github.com/anthonyonazure/termtracker.git
 cd termtracker
 npm install
 ```
