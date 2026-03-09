@@ -22,6 +22,8 @@ function createWindow() {
     skipTaskbar: true,
     transparent: false,
     backgroundColor: '#1a1a1a',
+    // 'panel' on macOS creates an NSPanel that floats without app activation
+    type: process.platform === 'darwin' ? 'panel' : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -76,22 +78,8 @@ function toggleWindow() {
   } else {
     const pos = getWindowPosition()
     mainWindow.setPosition(pos.x, pos.y, false)
-    // macOS with hidden dock needs extra work to bring window forward
-    if (process.platform === 'darwin') {
-      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-      mainWindow.setAlwaysOnTop(true, 'screen-saver')
-      app.show()  // temporarily activates the app process
-      app.focus({ steal: true })
-    }
     mainWindow.show()
     mainWindow.focus()
-    if (process.platform === 'darwin') {
-      setTimeout(() => {
-        if (!mainWindow) return
-        mainWindow.setAlwaysOnTop(false)
-        mainWindow.setVisibleOnAllWorkspaces(false)
-      }, 300)
-    }
   }
 }
 
