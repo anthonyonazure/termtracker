@@ -9,23 +9,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const WINDOW_WIDTH = 420
 const WINDOW_HEIGHT = 700
-
-// Output token limit for Max 5x plan (configurable via settings in renderer)
 const OUTPUT_LIMIT = 45_000_000
+const isMac = process.platform === 'darwin'
 
-// --- Tray icon renderer (matches claude-usage-bar style) ---
-// Layout: ["5h"/"7d" labels] [gap] [progress bars]
-// Two rows, 5px bar height, 3px gap between rows, 18px total height
+// ─── macOS menu bar icon: "5h [bar] / 7d [bar]" wide image ───
+// Windows tray: simple 16x16 gauge icon (wide images don't work in the notification area)
 
-const ICON_W = 42
-const ICON_H = 18
-const LABEL_W = 14
-const LABEL_GAP = 2
-const BAR_W = 24
-const BAR_H = 5
-const ROW_GAP = 3
-
-// 3x5 bitmap font for needed characters
+// 3x5 bitmap font
 const FONT: Record<string, number[][]> = {
   '5': [[1,1,1],[1,0,0],[1,1,1],[0,0,1],[1,1,1]],
   '7': [[1,1,1],[0,0,1],[0,1,0],[0,1,0],[0,1,0]],
@@ -33,147 +23,154 @@ const FONT: Record<string, number[][]> = {
   'd': [[0,0,1],[0,0,1],[1,1,1],[1,0,1],[1,1,1]],
 }
 
-function createMenuBarIcon(pct5h: number, pctCycle: number): nativeImage {
-  const isMac = process.platform === 'darwin'
-  const scale = isMac ? 2 : 1
-  const w = ICON_W * scale
-  const h = ICON_H * scale
+function createMacIcon(pct5h: number, pctCycle: number): nativeImage {
+  const scale = 2 // @2x retina
+  const LW = 42, LH = 18
+  const w = LW * scale, h = LH * scale
   const buf = Buffer.alloc(w * h * 4, 0)
 
-  const R = isMac ? 0 : 0xe8
-  const G = isMac ? 0 : 0x76
-  const B = isMac ? 0 : 0x3a
-
-  function setPixel(px: number, py: number, a: number) {
-    if (px < 0 || px >= w || py < 0 || py >= h) return
-    const i = (py * w + px) * 4
-    buf[i] = R; buf[i + 1] = G; buf[i + 2] = B; buf[i + 3] = a
-  }
-
-  function dot(lx: number, ly: number, a: number = 255) {
-    const sx = Math.round(lx * scale)
-    const sy = Math.round(ly * scale)
-    for (let dy = 0; dy < scale; dy++) {
-      for (let dx = 0; dx < scale; dx++) {
-        setPixel(sx + dx, sy + dy, a)
+  function dot(lx: number, ly: number, a: number) {
+    const sx = Math.round(lx * scale), sy = Math.round(ly * scale)
+    for (let dy = 0; dy < scale; dy++) for (let dx = 0; dx < scale; dx++) {
+      const fx = sx + dx, fy = sy + dy
+      if (fx >= 0 && fx < w && fy >= 0 && fy < h) {
+        const i = (fy * w + fx) * 4
+        buf[i] = 0; buf[i+1] = 0; buf[i+2] = 0; buf[i+3] = a
       }
     }
   }
 
-  function fillRect(x: number, y: number, rw: number, rh: number, a: number = 255) {
-    for (let ly = y; ly < y + rh; ly++) {
-      for (let lx = x; lx < x + rw; lx++) {
-        dot(lx, ly, a)
-      }
-    }
+  function fillRect(x: number, y: number, rw: number, rh: number, a: number) {
+    for (let ly = y; ly < y + rh; ly++) for (let lx = x; lx < x + rw; lx++) dot(lx, ly, a)
   }
-
-  // Rounded rect (1px corner radius)
-  function roundRect(x: number, y: number, rw: number, rh: number, a: number = 255) {
+  function roundRect(x: number, y: number, rw: number, rh: number, a: number) {
     fillRect(x + 1, y, rw - 2, rh, a)
     fillRect(x, y + 1, 1, rh - 2, a)
     fillRect(x + rw - 1, y + 1, 1, rh - 2, a)
   }
 
-  const barX = LABEL_W + LABEL_GAP
-  const topY = Math.round((ICON_H - BAR_H * 2 - ROW_GAP) / 2)
-  const bottomY = topY + BAR_H + ROW_GAP
+  const barX = 16, barW = 24, barH = 5, topY = 3, bottomY = 11
 
-  // Draw text label using bitmap font
+  // Labels
   function drawLabel(text: string, lx: number, ly: number) {
-    let cursorX = lx
+    let cx = lx
     for (const ch of text) {
-      const glyph = FONT[ch]
-      if (!glyph) { cursorX += 4; continue }
-      for (let row = 0; row < glyph.length; row++) {
-        for (let col = 0; col < glyph[row].length; col++) {
-          if (glyph[row][col]) dot(cursorX + col, ly + row, 255)
-        }
+      const g = FONT[ch]; if (!g) { cx += 4; continue }
+      for (let r = 0; r < g.length; r++) for (let c = 0; c < g[r].length; c++) {
+        if (g[r][c]) dot(cx + c, ly + r, 255)
       }
-      cursorX += glyph[0].length + 1
+      cx += g[0].length + 1
     }
   }
+  drawLabel('5h', 7, topY)
+  drawLabel('7d', 7, bottomY)
 
-  // Right-align labels: "5h" and "7d" are each 7px wide (3+1+3)
-  const labelStartX = LABEL_W - 7
-  drawLabel('5h', labelStartX, topY)
-  drawLabel('7d', labelStartX, bottomY)
-
-  // Draw progress bars
+  // Bars
   function drawBar(bx: number, by: number, pct: number) {
-    roundRect(bx, by, BAR_W, BAR_H, 60) // dim track
+    roundRect(bx, by, barW, barH, 65)
     const clamped = Math.max(0, Math.min(1, pct / 100))
-    if (clamped > 0) {
-      const fillW = Math.max(2, Math.round(BAR_W * clamped))
-      roundRect(bx, by, fillW, BAR_H, 255) // bright fill
-    }
+    if (clamped > 0) roundRect(bx, by, Math.max(3, Math.round(barW * clamped)), barH, 255)
   }
-
   drawBar(barX, topY, pct5h)
   drawBar(barX, bottomY, pctCycle)
 
   const img = nativeImage.createFromBuffer(buf, { width: w, height: h, scaleFactor: scale })
-  if (isMac) img.setTemplateImage(true)
+  img.setTemplateImage(true)
   return img
 }
 
-// Get this billing cycle's output tokens
+function createWinIcon(pctCycle: number): nativeImage {
+  // 16x16 circular gauge icon for Windows notification area
+  const size = 16
+  const buf = Buffer.alloc(size * size * 4, 0)
+  const R = 0xe8, G = 0x76, B = 0x3a // brand orange
+
+  function px(x: number, y: number, a: number) {
+    if (x < 0 || x >= size || y < 0 || y >= size) return
+    const i = (y * size + x) * 4
+    buf[i] = R; buf[i+1] = G; buf[i+2] = B; buf[i+3] = a
+  }
+
+  const cx = 7.5, cy = 7.5, outerR = 7, innerR = 5
+
+  // Draw ring
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+    if (dist <= outerR && dist >= innerR) px(x, y, 60) // dim ring
+  }
+
+  // Fill arc based on usage (clockwise from top)
+  const pct = Math.max(0, Math.min(1, pctCycle / 100))
+  const endAngle = -Math.PI / 2 + pct * Math.PI * 2
+
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+    if (dist <= outerR && dist >= innerR) {
+      let angle = Math.atan2(y - cy, x - cx)
+      // Normalize: start from top (-PI/2), go clockwise
+      if (angle < -Math.PI / 2) angle += Math.PI * 2
+      const startAngle = -Math.PI / 2
+      const normAngle = angle < startAngle ? angle + Math.PI * 2 : angle
+      const normEnd = endAngle < startAngle ? endAngle + Math.PI * 2 : endAngle
+      if (normAngle <= normEnd) px(x, y, 255) // bright fill
+    }
+  }
+
+  // Center dot
+  for (let y = 6; y <= 9; y++) for (let x = 6; x <= 9; x++) {
+    const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+    if (dist <= 1.5) px(x, y, 255)
+  }
+
+  return nativeImage.createFromBuffer(buf, { width: size, height: size })
+}
+
+function createIcon(pct5h: number, pctCycle: number): nativeImage {
+  return isMac ? createMacIcon(pct5h, pctCycle) : createWinIcon(pctCycle)
+}
+
+// ─── Stats helpers ───
+
 function getCycleOutputTokens(billingDay: number = 1): number {
   const stats = computeStats()
   const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth()
-
   let cycleStart: Date
   if (now.getDate() >= billingDay) {
-    cycleStart = new Date(year, month, billingDay)
+    cycleStart = new Date(now.getFullYear(), now.getMonth(), billingDay)
   } else {
-    cycleStart = new Date(year, month - 1, billingDay)
+    cycleStart = new Date(now.getFullYear(), now.getMonth() - 1, billingDay)
   }
   const cycleStartStr = cycleStart.toISOString().slice(0, 10)
-
   let total = 0
   for (const day of stats.dailyStats) {
-    if (day.date >= cycleStartStr) {
-      total += day.tokens.outputTokens
-    }
+    if (day.date >= cycleStartStr) total += day.tokens.outputTokens
   }
   return total
 }
 
-// Get last 5 hours of output tokens as % of a daily pace limit
 function get5hOutputPercent(): number {
   const stats = computeStats()
-  const now = new Date()
-  const fiveHoursAgo = new Date(now.getTime() - 5 * 60 * 60 * 1000)
-  const todayStr = now.toISOString().slice(0, 10)
+  const todayStr = new Date().toISOString().slice(0, 10)
   const todayStats = stats.dailyStats.find(d => d.date === todayStr)
   if (!todayStats) return 0
-
-  // Approximate: use today's output tokens scaled by 5h/24h
-  // (JSONL doesn't have per-hour granularity, so this is a rough estimate)
-  const hourFraction = Math.min(1, (now.getHours() + 1) / 24)
-  const todayOutput = todayStats.tokens.outputTokens
-  const dailyPace = OUTPUT_LIMIT / 30 // ~1.5M per day for Max 5x
-  const estimated5h = hourFraction > 0 ? (todayOutput / hourFraction) * (5 / 24) : 0
+  const hour = new Date().getHours() + 1
+  const hourFraction = Math.min(1, hour / 24)
+  const dailyPace = OUTPUT_LIMIT / 30
+  const estimated5h = hourFraction > 0 ? (todayStats.tokens.outputTokens / hourFraction) * (5 / 24) : 0
   return Math.min(100, (estimated5h / dailyPace) * 100 * 5)
 }
 
-// Compute billing cycle days remaining
 function daysLeftInCycle(billingDay: number = 1): number {
   const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth()
   let resetDate: Date
   if (now.getDate() >= billingDay) {
-    resetDate = new Date(year, month + 1, billingDay)
+    resetDate = new Date(now.getFullYear(), now.getMonth() + 1, billingDay)
   } else {
-    resetDate = new Date(year, month, billingDay)
+    resetDate = new Date(now.getFullYear(), now.getMonth(), billingDay)
   }
   return Math.max(1, Math.ceil((resetDate.getTime() - now.getTime()) / 86_400_000))
 }
 
-// Format token count compactly
 function shortTokens(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -181,19 +178,19 @@ function shortTokens(n: number): string {
   return n.toString()
 }
 
-// Suppress GPU cache errors on Windows
+// ─── App setup ───
+
 app.commandLine.appendSwitch('disable-gpu-cache')
 
-// Determine the URL or file to load
 const indexUrl = process.env.VITE_DEV_SERVER_URL || `file://${path.join(__dirname, '../dist/index.html')}`
 
 const mb = menubar({
   index: indexUrl,
-  icon: createMenuBarIcon(0, 0),
+  icon: createIcon(0, 0),
   tooltip: 'TermTracker — Claude Code Usage',
-  preloadWindow: true,
+  preloadWindow: false, // don't preload — faster startup
   showDockIcon: false,
-  windowPosition: process.platform === 'darwin' ? 'trayCenter' : 'trayBottomCenter',
+  windowPosition: isMac ? 'trayCenter' : 'trayBottomCenter',
   browserWindow: {
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
@@ -210,7 +207,24 @@ const mb = menubar({
   },
 })
 
-// Update the tray icon based on current usage
+// On Windows, manually position the window above the taskbar near the tray
+mb.on('show', () => {
+  if (!isMac && mb.window) {
+    const trayBounds = mb.tray.getBounds()
+    const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y })
+    const workArea = display.workArea
+
+    // Position: right-aligned above taskbar
+    const x = Math.min(
+      trayBounds.x - Math.round(WINDOW_WIDTH / 2) + Math.round(trayBounds.width / 2),
+      workArea.x + workArea.width - WINDOW_WIDTH - 8
+    )
+    const y = workArea.y + workArea.height - WINDOW_HEIGHT - 8
+
+    mb.window.setPosition(Math.max(workArea.x, x), y)
+  }
+})
+
 function updateTray() {
   try {
     const cycleOutput = getCycleOutputTokens()
@@ -218,42 +232,29 @@ function updateTray() {
     const pct5h = get5hOutputPercent()
     const daysLeft = daysLeftInCycle()
 
-    // Update icon with both bars
-    mb.tray.setImage(createMenuBarIcon(pct5h, cyclePct))
-
-    // No text title needed — the bars in the icon tell the story
-    mb.tray.setTitle('')
-
-    // Tooltip for hover detail
+    mb.tray.setImage(createIcon(pct5h, cyclePct))
+    mb.tray.setTitle(isMac ? '' : '') // no text on either platform
     mb.tray.setToolTip(`TermTracker — ${shortTokens(cycleOutput)} / ${shortTokens(OUTPUT_LIMIT)} output (${Math.round(cyclePct)}%) — ${daysLeft}d left`)
-  } catch {
-    // Silent fail — tray updates are non-critical
-  }
+  } catch {}
 }
 
 mb.on('ready', () => {
   registerDataHandlers()
   startThrottleWatcher()
 
-  // Enable auto-start on login (works on both macOS and Windows)
   app.setLoginItemSettings({ openAtLogin: true })
 
-  // IPC handlers for auto-start toggle
-  ipcMain.handle('get-auto-start', () => {
-    return app.getLoginItemSettings().openAtLogin
-  })
+  ipcMain.handle('get-auto-start', () => app.getLoginItemSettings().openAtLogin)
   ipcMain.handle('set-auto-start', (_event, enabled: boolean) => {
     app.setLoginItemSettings({ openAtLogin: enabled })
     return enabled
   })
 
-  // Set initial tray state
-  updateTray()
-
-  // Refresh every 60 seconds
+  // Defer stats computation so tray appears instantly
+  setTimeout(updateTray, 500)
   setInterval(updateTray, 60_000)
 
-  console.log('TermTracker ready — click the menu bar icon')
+  console.log('TermTracker ready — click the tray icon')
 })
 
 mb.on('after-create-window', () => {
