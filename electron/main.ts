@@ -41,8 +41,8 @@ function createWindow() {
 
   // Hide when clicking outside — but not if we just showed the window
   mainWindow.on('blur', () => {
-    if (Date.now() - lastShowTime > 500) {
-      mainWindow?.hide()
+    if (mainWindow && !mainWindow.isDestroyed() && Date.now() - lastShowTime > 500) {
+      mainWindow.hide()
     }
   })
 }
@@ -75,29 +75,15 @@ function getWindowPosition() {
 }
 
 function toggleWindow() {
-  if (!mainWindow) return
-  console.log('toggleWindow called, visible:', mainWindow.isVisible())
+  if (!mainWindow || mainWindow.isDestroyed()) return
   if (mainWindow.isVisible()) {
     mainWindow.hide()
   } else {
     lastShowTime = Date.now()
-    if (process.platform === 'darwin') {
-      // On macOS, center on screen first to verify window works at all
-      mainWindow.center()
-      mainWindow.showInactive()
-      // Then try to bring it forward
-      setTimeout(() => {
-        if (!mainWindow) return
-        mainWindow.show()
-        mainWindow.focus()
-        console.log('window should be visible now, bounds:', mainWindow.getBounds())
-      }, 100)
-    } else {
-      const pos = getWindowPosition()
-      mainWindow.setPosition(pos.x, pos.y, false)
-      mainWindow.show()
-      mainWindow.focus()
-    }
+    const pos = getWindowPosition()
+    mainWindow.setPosition(pos.x, pos.y, false)
+    mainWindow.show()
+    mainWindow.focus()
   }
 }
 
