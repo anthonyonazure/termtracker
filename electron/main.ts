@@ -207,17 +207,17 @@ const mb = menubar({
   },
 })
 
-// On Windows, position window at bottom-right above the taskbar
-// (tray bounds are unreliable, especially when icon is in the overflow area)
-mb.on('show', () => {
-  if (!isMac && mb.window) {
+// Position window on Windows: bottom-right above taskbar
+function positionWindowWin() {
+  if (!isMac && mb.window && !mb.window.isDestroyed()) {
     const display = screen.getPrimaryDisplay()
     const workArea = display.workArea
-    const x = workArea.x + workArea.width - WINDOW_WIDTH - 12
-    const y = workArea.y + workArea.height - WINDOW_HEIGHT - 12
-    mb.window.setPosition(x, y)
+    mb.window.setPosition(
+      workArea.x + workArea.width - WINDOW_WIDTH - 12,
+      workArea.y + workArea.height - WINDOW_HEIGHT - 12
+    )
   }
-})
+}
 
 function updateTray() {
   try {
@@ -227,7 +227,7 @@ function updateTray() {
     const daysLeft = daysLeftInCycle()
 
     mb.tray.setImage(createIcon(pct5h, cyclePct))
-    mb.tray.setTitle(isMac ? '' : '') // no text on either platform
+    mb.tray.setTitle('')
     mb.tray.setToolTip(`TermTracker — ${shortTokens(cycleOutput)} / ${shortTokens(OUTPUT_LIMIT)} output (${Math.round(cyclePct)}%) — ${daysLeft}d left`)
   } catch {}
 }
@@ -244,7 +244,29 @@ mb.on('ready', () => {
     return enabled
   })
 
-  // Defer stats computation so tray appears instantly
+  // On Windows, bypass menubar's flaky click handling — directly toggle on click
+  if (!isMac) {
+    mb.tray.removeAllListeners('click')
+    mb.tray.on('click', () => {
+      if (!mb.window || mb.window.isDestroyed()) return
+      if (mb.window.isVisible()) {
+        mb.window.hide()
+      } else {
+        positionWindowWin()
+        mb.window.show()
+        mb.window.focus()
+      }
+    })
+    mb.tray.on('right-click', () => {
+      const { Menu } = require('electron')
+      Menu.buildFromTemplate([
+        { label: 'Show', click: () => { positionWindowWin(); mb.showWindow() } },
+        { type: 'separator' },
+        { label: 'Quit', click: () => app.quit() },
+      ]).popup()
+    })
+  }
+
   setTimeout(updateTray, 500)
   setInterval(updateTray, 60_000)
 
@@ -252,15 +274,19 @@ mb.on('ready', () => {
 })
 
 mb.on('after-create-window', () => {
-  mb.tray.on('right-click', () => {
-    const { Menu } = require('electron')
-    const contextMenu = Menu.buildFromTemplate([
-      { label: 'Show', click: () => mb.showWindow() },
-      { type: 'separator' },
-      { label: 'Quit', click: () => app.quit() },
-    ])
-    mb.tray.popUpContextMenu(contextMenu)
-  })
+  // macOS right-click menu (Windows handled above)
+  if (isMac) {
+    mb.tray.on('right-click', () => {
+      const { Menu } = require('electron')
+      Menu.buildFromTemplate([
+        { label: 'Show', click: () => mb.showWindow() },
+        { type: 'separator' },
+        { label: 'Quit', click: () => app.quit() },
+      ]).popup()
+    })
+  }
+  // Position on first create for Windows
+  positionWindowWin()
 })
 
 app.on('window-all-closed', (e: Event) => {
