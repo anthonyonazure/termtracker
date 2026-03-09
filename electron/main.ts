@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
+let lastShowTime = 0
 
 const WINDOW_WIDTH = 420
 const WINDOW_HEIGHT = 700
@@ -38,9 +39,11 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
-  // Hide when clicking outside
+  // Hide when clicking outside — but not if we just showed the window
   mainWindow.on('blur', () => {
-    mainWindow?.hide()
+    if (Date.now() - lastShowTime > 500) {
+      mainWindow?.hide()
+    }
   })
 }
 
@@ -78,6 +81,7 @@ function toggleWindow() {
   } else {
     const pos = getWindowPosition()
     mainWindow.setPosition(pos.x, pos.y, false)
+    lastShowTime = Date.now()
     mainWindow.show()
     mainWindow.focus()
   }
