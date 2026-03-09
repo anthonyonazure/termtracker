@@ -1,4 +1,4 @@
-import { app, nativeImage, screen } from 'electron'
+import { app, ipcMain, nativeImage, screen } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { menubar } from 'menubar'
@@ -10,11 +10,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const WINDOW_WIDTH = 420
 const WINDOW_HEIGHT = 700
 
-function createTrayIcon(): nativeImage {
+// Output token limit for Max 5x plan (configurable via settings in renderer)
+const OUTPUT_LIMIT = 45_000_000
+
+// Create a bar-chart style tray icon showing usage level (0-100%)
+function createBarIcon(usagePercent: number): nativeImage {
   const size = 22
   const buf = Buffer.alloc(size * size * 4, 0)
 
   const isMac = process.platform === 'darwin'
+  // On Mac, template images are monochrome (use black, OS inverts for dark mode)
+  // On Windows, use the brand orange
   const R = isMac ? 0 : 0xe8
   const G = isMac ? 0 : 0x76
   const B = isMac ? 0 : 0x3a
@@ -25,42 +31,92 @@ function createTrayIcon(): nativeImage {
     buf[i] = R; buf[i + 1] = G; buf[i + 2] = B; buf[i + 3] = a
   }
 
-  const cx = 11, cy = 11
-  // Vertical beam
-  for (let dy = -8; dy <= 8; dy++) {
-    const dist = Math.abs(dy)
-    const half = dist <= 2 ? 1 : 0
-    const alpha = dist <= 6 ? 255 : Math.round(255 * (1 - (dist - 6) / 3))
-    for (let dx = -half; dx <= half; dx++) {
-      px(cx + dx, cy + dy, Math.max(0, alpha))
+  // Draw 4 vertical bars like a bar chart / signal meter
+  // Each bar is 3px wide with 2px gap, heights represent usage level
+  // Bar heights: 25%, 50%, 75%, 100% of max — filled up to usagePercent
+  const barMaxHeights = [5, 9, 13, 17] // pixel heights for each bar
+  const barX = [2, 7, 12, 17]          // x start positions
+  const barW = 3                         // bar width
+  const bottom = 20                      // bottom y position
+
+  const pct = Math.min(1, Math.max(0, usagePercent / 100))
+
+  for (let b = 0; b < 4; b++) {
+    const maxH = barMaxHeights[b]
+    const threshold = (b + 1) / 4 // this bar lights up when usage >= 25%, 50%, 75%, 100%
+
+    // Filled bar (usage reached this level)
+    const filled = pct >= threshold
+    // Partial fill: if usage is between this bar's threshold and the previous
+    const prevThreshold = b / 4
+    const partial = !filled && pct > prevThreshold
+
+    const fillH = filled ? maxH : partial ? Math.round(maxH * ((pct - prevThreshold) / (threshold - prevThreshold))) : 0
+
+    for (let x = barX[b]; x < barX[b] + barW; x++) {
+      // Draw outline/empty bar (dim)
+      for (let h = 0; h < maxH; h++) {
+        const y = bottom - h
+        px(x, y, 40) // dim outline
+      }
+      // Draw filled portion
+      for (let h = 0; h < fillH; h++) {
+        const y = bottom - h
+        px(x, y, 255) // bright fill
+      }
     }
   }
-  // Horizontal beam
-  for (let dx = -8; dx <= 8; dx++) {
-    const dist = Math.abs(dx)
-    const half = dist <= 2 ? 1 : 0
-    const alpha = dist <= 6 ? 255 : Math.round(255 * (1 - (dist - 6) / 3))
-    for (let dy = -half; dy <= half; dy++) {
-      px(cx + dx, cy + dy, Math.max(0, alpha))
-    }
-  }
-  // Diagonal beams
-  for (let d = -5; d <= 5; d++) {
-    const dist = Math.abs(d)
-    const alpha = dist <= 3 ? 255 : Math.round(255 * (1 - (dist - 3) / 3))
-    if (alpha > 0) {
-      px(cx + d, cy + d, alpha)
-      px(cx + d, cy - d, alpha)
-    }
-  }
-  // Center
-  px(cx, cy, 255)
-  px(cx - 1, cy, 255); px(cx + 1, cy, 255)
-  px(cx, cy - 1, 255); px(cx, cy + 1, 255)
 
   const img = nativeImage.createFromBuffer(buf, { width: size, height: size })
   if (isMac) img.setTemplateImage(true)
   return img
+}
+
+// Get this billing cycle's output tokens
+function getCycleOutputTokens(billingDay: number = 1): number {
+  const stats = computeStats()
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth()
+
+  // Determine cycle start date
+  let cycleStart: Date
+  if (now.getDate() >= billingDay) {
+    cycleStart = new Date(year, month, billingDay)
+  } else {
+    cycleStart = new Date(year, month - 1, billingDay)
+  }
+  const cycleStartStr = cycleStart.toISOString().slice(0, 10)
+
+  let total = 0
+  for (const day of stats.dailyStats) {
+    if (day.date >= cycleStartStr) {
+      total += day.tokens.outputTokens
+    }
+  }
+  return total
+}
+
+// Compute billing cycle days remaining
+function daysLeftInCycle(billingDay: number = 1): number {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth()
+  let resetDate: Date
+  if (now.getDate() >= billingDay) {
+    resetDate = new Date(year, month + 1, billingDay)
+  } else {
+    resetDate = new Date(year, month, billingDay)
+  }
+  return Math.max(1, Math.ceil((resetDate.getTime() - now.getTime()) / 86_400_000))
+}
+
+// Format token count compactly
+function shortTokens(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`
+  return n.toString()
 }
 
 // Determine the URL or file to load
@@ -68,7 +124,7 @@ const indexUrl = process.env.VITE_DEV_SERVER_URL || `file://${path.join(__dirnam
 
 const mb = menubar({
   index: indexUrl,
-  icon: createTrayIcon(),
+  icon: createBarIcon(0),
   tooltip: 'TermTracker — Claude Code Usage',
   preloadWindow: true,
   showDockIcon: false,
@@ -88,49 +144,25 @@ const mb = menubar({
   },
 })
 
-// Format token count for tray title (compact)
-function shortTokens(n: number): string {
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`
-  return n.toString()
-}
-
-// Compute billing cycle days remaining
-function daysLeftInCycle(billingDay: number = 1): number {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth()
-  let resetDate: Date
-  if (now.getDate() >= billingDay) {
-    // Next reset is next month
-    resetDate = new Date(year, month + 1, billingDay)
-  } else {
-    resetDate = new Date(year, month, billingDay)
-  }
-  return Math.max(1, Math.ceil((resetDate.getTime() - now.getTime()) / 86_400_000))
-}
-
-// Get today's output tokens from stats
-function getTodayOutputTokens(stats: ReturnType<typeof computeStats>): number {
-  const today = new Date().toISOString().slice(0, 10)
-  const todayStats = stats.dailyStats.find(d => d.date === today)
-  return todayStats ? todayStats.tokens.outputTokens : 0
-}
-
-// Update the menu bar title with live stats
-function updateTrayTitle() {
+// Update the tray icon bars and title based on current usage
+function updateTray() {
   try {
-    const stats = computeStats()
-    const todayOut = getTodayOutputTokens(stats)
+    const cycleOutput = getCycleOutputTokens()
+    const pct = (cycleOutput / OUTPUT_LIMIT) * 100
     const daysLeft = daysLeftInCycle()
 
-    // Show today's output tokens and days left in cycle
-    // e.g. "1.2M 7d" = 1.2M output tokens today, 7 days left
-    const title = ` ${shortTokens(todayOut)} ${daysLeft}d`
+    // Update icon bars to reflect usage percentage
+    mb.tray.setImage(createBarIcon(pct))
+
+    // Show compact text: usage% and days remaining
+    // e.g. " 34% 22d"
+    const title = ` ${Math.round(pct)}% ${daysLeft}d`
     mb.tray.setTitle(title)
+
+    // Update tooltip with more detail
+    mb.tray.setToolTip(`TermTracker — ${shortTokens(cycleOutput)} / ${shortTokens(OUTPUT_LIMIT)} output (${Math.round(pct)}%) — ${daysLeft}d left`)
   } catch {
-    // Silent fail — tray title is non-critical
+    // Silent fail — tray updates are non-critical
   }
 }
 
@@ -138,11 +170,24 @@ mb.on('ready', () => {
   registerDataHandlers()
   startThrottleWatcher()
 
-  // Set initial tray title
-  updateTrayTitle()
+  // Enable auto-start on login (works on both macOS and Windows)
+  // Users can toggle this off via Settings or system preferences
+  app.setLoginItemSettings({ openAtLogin: true })
 
-  // Refresh tray title every 60 seconds
-  setInterval(updateTrayTitle, 60_000)
+  // IPC handlers for auto-start toggle
+  ipcMain.handle('get-auto-start', () => {
+    return app.getLoginItemSettings().openAtLogin
+  })
+  ipcMain.handle('set-auto-start', (_event, enabled: boolean) => {
+    app.setLoginItemSettings({ openAtLogin: enabled })
+    return enabled
+  })
+
+  // Set initial tray state
+  updateTray()
+
+  // Refresh every 60 seconds
+  setInterval(updateTray, 60_000)
 
   console.log('TermTracker ready — click the menu bar icon')
 })
