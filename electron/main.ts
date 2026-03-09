@@ -188,7 +188,7 @@ const mb = menubar({
   index: indexUrl,
   icon: createIcon(0, 0),
   tooltip: 'TermTracker — Claude Code Usage',
-  preloadWindow: false, // don't preload — faster startup
+  preloadWindow: true,
   showDockIcon: false,
   windowPosition: isMac ? 'trayCenter' : 'trayBottomCenter',
   browserWindow: {
@@ -207,21 +207,15 @@ const mb = menubar({
   },
 })
 
-// On Windows, manually position the window above the taskbar near the tray
+// On Windows, position window at bottom-right above the taskbar
+// (tray bounds are unreliable, especially when icon is in the overflow area)
 mb.on('show', () => {
   if (!isMac && mb.window) {
-    const trayBounds = mb.tray.getBounds()
-    const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y })
+    const display = screen.getPrimaryDisplay()
     const workArea = display.workArea
-
-    // Position: right-aligned above taskbar
-    const x = Math.min(
-      trayBounds.x - Math.round(WINDOW_WIDTH / 2) + Math.round(trayBounds.width / 2),
-      workArea.x + workArea.width - WINDOW_WIDTH - 8
-    )
-    const y = workArea.y + workArea.height - WINDOW_HEIGHT - 8
-
-    mb.window.setPosition(Math.max(workArea.x, x), y)
+    const x = workArea.x + workArea.width - WINDOW_WIDTH - 12
+    const y = workArea.y + workArea.height - WINDOW_HEIGHT - 12
+    mb.window.setPosition(x, y)
   }
 })
 
