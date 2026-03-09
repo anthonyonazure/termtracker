@@ -76,11 +76,22 @@ function toggleWindow() {
   } else {
     const pos = getWindowPosition()
     mainWindow.setPosition(pos.x, pos.y, false)
-    mainWindow.setAlwaysOnTop(true, 'pop-up-menu')
+    // macOS with hidden dock needs extra work to bring window forward
+    if (process.platform === 'darwin') {
+      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+      mainWindow.setAlwaysOnTop(true, 'screen-saver')
+      app.show()  // temporarily activates the app process
+      app.focus({ steal: true })
+    }
     mainWindow.show()
     mainWindow.focus()
-    // Release alwaysOnTop shortly after so blur-to-hide still works
-    setTimeout(() => mainWindow?.setAlwaysOnTop(false), 300)
+    if (process.platform === 'darwin') {
+      setTimeout(() => {
+        if (!mainWindow) return
+        mainWindow.setAlwaysOnTop(false)
+        mainWindow.setVisibleOnAllWorkspaces(false)
+      }, 300)
+    }
   }
 }
 
