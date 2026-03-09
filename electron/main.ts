@@ -76,100 +76,96 @@ function toggleWindow() {
   } else {
     const pos = getWindowPosition()
     mainWindow.setPosition(pos.x, pos.y, false)
-    // On macOS with dock hidden, need alwaysOnTop to ensure window appears
-    if (process.platform === 'darwin') {
-      mainWindow.setAlwaysOnTop(true, 'pop-up-menu')
-    }
+    mainWindow.setAlwaysOnTop(true, 'pop-up-menu')
     mainWindow.show()
     mainWindow.focus()
-    if (process.platform === 'darwin') {
-      // Release alwaysOnTop after it's visible so blur still works
-      setTimeout(() => mainWindow?.setAlwaysOnTop(false), 200)
-    }
+    // Release alwaysOnTop shortly after so blur-to-hide still works
+    setTimeout(() => mainWindow?.setAlwaysOnTop(false), 300)
   }
 }
 
+/**
+ * Claude/Anthropic sparkle icon — 22x22 for macOS retina menu bar.
+ * macOS: black on transparent (template image, auto-adapts to dark/light).
+ * Windows: orange (#e8763a) on transparent.
+ *
+ * The sparkle is a 4-pointed star (Anthropic's asterisk/sparkle mark).
+ */
 function createTrayIcon(): nativeImage {
-  // Create a 16x16 RGBA bitmap programmatically
-  const size = 16
-  const buffer = Buffer.alloc(size * size * 4) // RGBA
+  const size = 22
+  const buf = Buffer.alloc(size * size * 4, 0) // transparent
 
-  // Orange color (#e8763a)
-  const R = 0xe8, G = 0x76, B = 0x3a, A = 255
-  // White
-  const WR = 255, WG = 255, WB = 255
+  const isMac = process.platform === 'darwin'
+  // macOS template: black pixels; Windows: orange
+  const R = isMac ? 0 : 0xe8
+  const G = isMac ? 0 : 0x76
+  const B = isMac ? 0 : 0x3a
 
-  function setPixel(x: number, y: number, r: number, g: number, b: number, a: number = 255) {
+  function px(x: number, y: number, a: number = 255) {
     if (x < 0 || x >= size || y < 0 || y >= size) return
-    const idx = (y * size + x) * 4
-    buffer[idx] = r
-    buffer[idx + 1] = g
-    buffer[idx + 2] = b
-    buffer[idx + 3] = a
+    const i = (y * size + x) * 4
+    buf[i] = R; buf[i + 1] = G; buf[i + 2] = B; buf[i + 3] = a
   }
 
-  // Fill background with orange, rounded corners
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      // Simple rounded rect: skip corners
-      const isCorner =
-        (x === 0 && y === 0) || (x === 15 && y === 0) ||
-        (x === 0 && y === 15) || (x === 15 && y === 15)
-      if (!isCorner) {
-        setPixel(x, y, R, G, B, A)
-      }
+  // Draw a 4-pointed sparkle centered at (11, 11)
+  // Vertical beam (thin)
+  const cx = 11, cy = 11
+  for (let dy = -8; dy <= 8; dy++) {
+    const y = cy + dy
+    const dist = Math.abs(dy)
+    // Width tapers: widest at center (3px), narrows to 1px at tips
+    const half = dist <= 2 ? 1 : 0
+    const alpha = dist <= 6 ? 255 : Math.round(255 * (1 - (dist - 6) / 3))
+    for (let dx = -half; dx <= half; dx++) {
+      px(cx + dx, y, Math.max(0, alpha))
     }
   }
 
-  // Draw ">" chevron (white) - left side
-  // Row 4-11, forming a right-pointing chevron
-  setPixel(4, 4, WR, WG, WB)
-  setPixel(5, 5, WR, WG, WB)
-  setPixel(6, 6, WR, WG, WB)
-  setPixel(7, 7, WR, WG, WB)
-  setPixel(7, 8, WR, WG, WB)
-  setPixel(6, 9, WR, WG, WB)
-  setPixel(5, 10, WR, WG, WB)
-  setPixel(4, 11, WR, WG, WB)
-  // Thicken the chevron
-  setPixel(5, 4, WR, WG, WB)
-  setPixel(6, 5, WR, WG, WB)
-  setPixel(7, 6, WR, WG, WB)
-  setPixel(8, 7, WR, WG, WB)
-  setPixel(8, 8, WR, WG, WB)
-  setPixel(7, 9, WR, WG, WB)
-  setPixel(6, 10, WR, WG, WB)
-  setPixel(5, 11, WR, WG, WB)
-
-  // Draw "_" underscore (white) - right side
-  for (let x = 9; x <= 13; x++) {
-    setPixel(x, 11, WR, WG, WB)
-    setPixel(x, 12, WR, WG, WB)
+  // Horizontal beam (thin)
+  for (let dx = -8; dx <= 8; dx++) {
+    const x = cx + dx
+    const dist = Math.abs(dx)
+    const half = dist <= 2 ? 1 : 0
+    const alpha = dist <= 6 ? 255 : Math.round(255 * (1 - (dist - 6) / 3))
+    for (let dy = -half; dy <= half; dy++) {
+      px(x, cy + dy, Math.max(0, alpha))
+    }
   }
 
-  return nativeImage.createFromBuffer(buffer, {
-    width: size,
-    height: size,
-  })
+  // Diagonal beams (shorter, 45°)
+  for (let d = -5; d <= 5; d++) {
+    const dist = Math.abs(d)
+    const alpha = dist <= 3 ? 255 : Math.round(255 * (1 - (dist - 3) / 3))
+    if (alpha > 0) {
+      px(cx + d, cy + d, alpha)
+      px(cx + d, cy - d, alpha)
+    }
+  }
+
+  // Bright center
+  px(cx, cy, 255)
+  px(cx - 1, cy, 255); px(cx + 1, cy, 255)
+  px(cx, cy - 1, 255); px(cx, cy + 1, 255)
+
+  const img = nativeImage.createFromBuffer(buf, { width: size, height: size })
+
+  if (isMac) {
+    img.setTemplateImage(true)
+  }
+
+  return img
 }
 
 function createTray() {
   const icon = createTrayIcon()
-
-  if (process.platform === 'darwin') {
-    icon.setTemplateImage(true)
-  }
-
   tray = new Tray(icon)
   tray.setToolTip('TermTracker — Claude Code Usage')
 
-  // Windows: both click and double-click to be safe
-  tray.on('click', () => {
-    console.log('tray click')
+  tray.on('click', (_event, bounds) => {
+    console.log('tray click', bounds)
     toggleWindow()
   })
   tray.on('double-click', () => {
-    console.log('tray double-click')
     toggleWindow()
   })
 
