@@ -444,6 +444,9 @@ function computeStats(): OverallStats {
 
 let cachedStats: OverallStats | null = null
 
+export { computeStats }
+export type { OverallStats, TokenUsage, DailyStats }
+
 function isValidSender(event: Electron.IpcMainInvokeEvent): boolean {
   try {
     const url = event.senderFrame?.url || ''

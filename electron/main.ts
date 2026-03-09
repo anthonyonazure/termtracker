@@ -2,7 +2,7 @@ import { app, nativeImage, screen } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { menubar } from 'menubar'
-import { registerDataHandlers } from './data-reader'
+import { registerDataHandlers, computeStats } from './data-reader'
 import { startThrottleWatcher } from './throttle-watcher'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -88,9 +88,62 @@ const mb = menubar({
   },
 })
 
+// Format token count for tray title (compact)
+function shortTokens(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`
+  return n.toString()
+}
+
+// Compute billing cycle days remaining
+function daysLeftInCycle(billingDay: number = 1): number {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth()
+  let resetDate: Date
+  if (now.getDate() >= billingDay) {
+    // Next reset is next month
+    resetDate = new Date(year, month + 1, billingDay)
+  } else {
+    resetDate = new Date(year, month, billingDay)
+  }
+  return Math.max(1, Math.ceil((resetDate.getTime() - now.getTime()) / 86_400_000))
+}
+
+// Get today's output tokens from stats
+function getTodayOutputTokens(stats: ReturnType<typeof computeStats>): number {
+  const today = new Date().toISOString().slice(0, 10)
+  const todayStats = stats.dailyStats.find(d => d.date === today)
+  return todayStats ? todayStats.tokens.outputTokens : 0
+}
+
+// Update the menu bar title with live stats
+function updateTrayTitle() {
+  try {
+    const stats = computeStats()
+    const todayOut = getTodayOutputTokens(stats)
+    const daysLeft = daysLeftInCycle()
+
+    // Show today's output tokens and days left in cycle
+    // e.g. "1.2M 7d" = 1.2M output tokens today, 7 days left
+    const title = ` ${shortTokens(todayOut)} ${daysLeft}d`
+    mb.tray.setTitle(title)
+  } catch {
+    // Silent fail — tray title is non-critical
+  }
+}
+
 mb.on('ready', () => {
   registerDataHandlers()
   startThrottleWatcher()
+
+  // Set initial tray title
+  updateTrayTitle()
+
+  // Refresh tray title every 60 seconds
+  setInterval(updateTrayTitle, 60_000)
+
   console.log('TermTracker ready — click the menu bar icon')
 })
 
