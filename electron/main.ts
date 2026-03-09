@@ -13,61 +13,106 @@ const WINDOW_HEIGHT = 700
 // Output token limit for Max 5x plan (configurable via settings in renderer)
 const OUTPUT_LIMIT = 45_000_000
 
-// Create a bar-chart style tray icon showing usage level (0-100%)
-function createBarIcon(usagePercent: number): nativeImage {
-  const size = 22
-  const buf = Buffer.alloc(size * size * 4, 0)
+// --- Tray icon renderer (matches claude-usage-bar style) ---
+// Layout: ["5h"/"7d" labels] [gap] [progress bars]
+// Two rows, 5px bar height, 3px gap between rows, 18px total height
 
+const ICON_W = 42
+const ICON_H = 18
+const LABEL_W = 14
+const LABEL_GAP = 2
+const BAR_W = 24
+const BAR_H = 5
+const ROW_GAP = 3
+
+// 3x5 bitmap font for needed characters
+const FONT: Record<string, number[][]> = {
+  '5': [[1,1,1],[1,0,0],[1,1,1],[0,0,1],[1,1,1]],
+  '7': [[1,1,1],[0,0,1],[0,1,0],[0,1,0],[0,1,0]],
+  'h': [[1,0,0],[1,0,0],[1,1,1],[1,0,1],[1,0,1]],
+  'd': [[0,0,1],[0,0,1],[1,1,1],[1,0,1],[1,1,1]],
+}
+
+function createMenuBarIcon(pct5h: number, pctCycle: number): nativeImage {
   const isMac = process.platform === 'darwin'
-  // On Mac, template images are monochrome (use black, OS inverts for dark mode)
-  // On Windows, use the brand orange
+  const scale = isMac ? 2 : 1
+  const w = ICON_W * scale
+  const h = ICON_H * scale
+  const buf = Buffer.alloc(w * h * 4, 0)
+
   const R = isMac ? 0 : 0xe8
   const G = isMac ? 0 : 0x76
   const B = isMac ? 0 : 0x3a
 
-  function px(x: number, y: number, a: number = 255) {
-    if (x < 0 || x >= size || y < 0 || y >= size) return
-    const i = (y * size + x) * 4
+  function setPixel(px: number, py: number, a: number) {
+    if (px < 0 || px >= w || py < 0 || py >= h) return
+    const i = (py * w + px) * 4
     buf[i] = R; buf[i + 1] = G; buf[i + 2] = B; buf[i + 3] = a
   }
 
-  // Draw 4 vertical bars like a bar chart / signal meter
-  // Each bar is 3px wide with 2px gap, heights represent usage level
-  // Bar heights: 25%, 50%, 75%, 100% of max — filled up to usagePercent
-  const barMaxHeights = [5, 9, 13, 17] // pixel heights for each bar
-  const barX = [2, 7, 12, 17]          // x start positions
-  const barW = 3                         // bar width
-  const bottom = 20                      // bottom y position
-
-  const pct = Math.min(1, Math.max(0, usagePercent / 100))
-
-  for (let b = 0; b < 4; b++) {
-    const maxH = barMaxHeights[b]
-    const threshold = (b + 1) / 4 // this bar lights up when usage >= 25%, 50%, 75%, 100%
-
-    // Filled bar (usage reached this level)
-    const filled = pct >= threshold
-    // Partial fill: if usage is between this bar's threshold and the previous
-    const prevThreshold = b / 4
-    const partial = !filled && pct > prevThreshold
-
-    const fillH = filled ? maxH : partial ? Math.round(maxH * ((pct - prevThreshold) / (threshold - prevThreshold))) : 0
-
-    for (let x = barX[b]; x < barX[b] + barW; x++) {
-      // Draw outline/empty bar (dim)
-      for (let h = 0; h < maxH; h++) {
-        const y = bottom - h
-        px(x, y, 40) // dim outline
-      }
-      // Draw filled portion
-      for (let h = 0; h < fillH; h++) {
-        const y = bottom - h
-        px(x, y, 255) // bright fill
+  function dot(lx: number, ly: number, a: number = 255) {
+    const sx = Math.round(lx * scale)
+    const sy = Math.round(ly * scale)
+    for (let dy = 0; dy < scale; dy++) {
+      for (let dx = 0; dx < scale; dx++) {
+        setPixel(sx + dx, sy + dy, a)
       }
     }
   }
 
-  const img = nativeImage.createFromBuffer(buf, { width: size, height: size })
+  function fillRect(x: number, y: number, rw: number, rh: number, a: number = 255) {
+    for (let ly = y; ly < y + rh; ly++) {
+      for (let lx = x; lx < x + rw; lx++) {
+        dot(lx, ly, a)
+      }
+    }
+  }
+
+  // Rounded rect (1px corner radius)
+  function roundRect(x: number, y: number, rw: number, rh: number, a: number = 255) {
+    fillRect(x + 1, y, rw - 2, rh, a)
+    fillRect(x, y + 1, 1, rh - 2, a)
+    fillRect(x + rw - 1, y + 1, 1, rh - 2, a)
+  }
+
+  const barX = LABEL_W + LABEL_GAP
+  const topY = Math.round((ICON_H - BAR_H * 2 - ROW_GAP) / 2)
+  const bottomY = topY + BAR_H + ROW_GAP
+
+  // Draw text label using bitmap font
+  function drawLabel(text: string, lx: number, ly: number) {
+    let cursorX = lx
+    for (const ch of text) {
+      const glyph = FONT[ch]
+      if (!glyph) { cursorX += 4; continue }
+      for (let row = 0; row < glyph.length; row++) {
+        for (let col = 0; col < glyph[row].length; col++) {
+          if (glyph[row][col]) dot(cursorX + col, ly + row, 255)
+        }
+      }
+      cursorX += glyph[0].length + 1
+    }
+  }
+
+  // Right-align labels: "5h" and "7d" are each 7px wide (3+1+3)
+  const labelStartX = LABEL_W - 7
+  drawLabel('5h', labelStartX, topY)
+  drawLabel('7d', labelStartX, bottomY)
+
+  // Draw progress bars
+  function drawBar(bx: number, by: number, pct: number) {
+    roundRect(bx, by, BAR_W, BAR_H, 60) // dim track
+    const clamped = Math.max(0, Math.min(1, pct / 100))
+    if (clamped > 0) {
+      const fillW = Math.max(2, Math.round(BAR_W * clamped))
+      roundRect(bx, by, fillW, BAR_H, 255) // bright fill
+    }
+  }
+
+  drawBar(barX, topY, pct5h)
+  drawBar(barX, bottomY, pctCycle)
+
+  const img = nativeImage.createFromBuffer(buf, { width: w, height: h, scaleFactor: scale })
   if (isMac) img.setTemplateImage(true)
   return img
 }
@@ -79,7 +124,6 @@ function getCycleOutputTokens(billingDay: number = 1): number {
   const year = now.getFullYear()
   const month = now.getMonth()
 
-  // Determine cycle start date
   let cycleStart: Date
   if (now.getDate() >= billingDay) {
     cycleStart = new Date(year, month, billingDay)
@@ -95,6 +139,24 @@ function getCycleOutputTokens(billingDay: number = 1): number {
     }
   }
   return total
+}
+
+// Get last 5 hours of output tokens as % of a daily pace limit
+function get5hOutputPercent(): number {
+  const stats = computeStats()
+  const now = new Date()
+  const fiveHoursAgo = new Date(now.getTime() - 5 * 60 * 60 * 1000)
+  const todayStr = now.toISOString().slice(0, 10)
+  const todayStats = stats.dailyStats.find(d => d.date === todayStr)
+  if (!todayStats) return 0
+
+  // Approximate: use today's output tokens scaled by 5h/24h
+  // (JSONL doesn't have per-hour granularity, so this is a rough estimate)
+  const hourFraction = Math.min(1, (now.getHours() + 1) / 24)
+  const todayOutput = todayStats.tokens.outputTokens
+  const dailyPace = OUTPUT_LIMIT / 30 // ~1.5M per day for Max 5x
+  const estimated5h = hourFraction > 0 ? (todayOutput / hourFraction) * (5 / 24) : 0
+  return Math.min(100, (estimated5h / dailyPace) * 100 * 5)
 }
 
 // Compute billing cycle days remaining
@@ -119,15 +181,19 @@ function shortTokens(n: number): string {
   return n.toString()
 }
 
+// Suppress GPU cache errors on Windows
+app.commandLine.appendSwitch('disable-gpu-cache')
+
 // Determine the URL or file to load
 const indexUrl = process.env.VITE_DEV_SERVER_URL || `file://${path.join(__dirname, '../dist/index.html')}`
 
 const mb = menubar({
   index: indexUrl,
-  icon: createBarIcon(0),
+  icon: createMenuBarIcon(0, 0),
   tooltip: 'TermTracker — Claude Code Usage',
   preloadWindow: true,
   showDockIcon: false,
+  windowPosition: process.platform === 'darwin' ? 'trayCenter' : 'trayBottomCenter',
   browserWindow: {
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
@@ -144,23 +210,22 @@ const mb = menubar({
   },
 })
 
-// Update the tray icon bars and title based on current usage
+// Update the tray icon based on current usage
 function updateTray() {
   try {
     const cycleOutput = getCycleOutputTokens()
-    const pct = (cycleOutput / OUTPUT_LIMIT) * 100
+    const cyclePct = (cycleOutput / OUTPUT_LIMIT) * 100
+    const pct5h = get5hOutputPercent()
     const daysLeft = daysLeftInCycle()
 
-    // Update icon bars to reflect usage percentage
-    mb.tray.setImage(createBarIcon(pct))
+    // Update icon with both bars
+    mb.tray.setImage(createMenuBarIcon(pct5h, cyclePct))
 
-    // Show compact text: usage% and days remaining
-    // e.g. " 34% 22d"
-    const title = ` ${Math.round(pct)}% ${daysLeft}d`
-    mb.tray.setTitle(title)
+    // No text title needed — the bars in the icon tell the story
+    mb.tray.setTitle('')
 
-    // Update tooltip with more detail
-    mb.tray.setToolTip(`TermTracker — ${shortTokens(cycleOutput)} / ${shortTokens(OUTPUT_LIMIT)} output (${Math.round(pct)}%) — ${daysLeft}d left`)
+    // Tooltip for hover detail
+    mb.tray.setToolTip(`TermTracker — ${shortTokens(cycleOutput)} / ${shortTokens(OUTPUT_LIMIT)} output (${Math.round(cyclePct)}%) — ${daysLeft}d left`)
   } catch {
     // Silent fail — tray updates are non-critical
   }
@@ -171,7 +236,6 @@ mb.on('ready', () => {
   startThrottleWatcher()
 
   // Enable auto-start on login (works on both macOS and Windows)
-  // Users can toggle this off via Settings or system preferences
   app.setLoginItemSettings({ openAtLogin: true })
 
   // IPC handlers for auto-start toggle
@@ -193,7 +257,6 @@ mb.on('ready', () => {
 })
 
 mb.on('after-create-window', () => {
-  // Right-click menu
   mb.tray.on('right-click', () => {
     const { Menu } = require('electron')
     const contextMenu = Menu.buildFromTemplate([

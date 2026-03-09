@@ -57,11 +57,10 @@ export function OverviewCard({ stats, planLabel, planPrice }: Props) {
       </div>
 
       {/* Big stats row */}
-      <div className="grid grid-cols-4 gap-3 mb-3">
+      <div className="grid grid-cols-3 gap-3 mb-3">
         <StatItem value={formatTokens(total)} label="tokens" />
         <StatItem value={formatTokens(stats.totalSessions)} label="sessions" />
         <StatItem value={formatTokens(stats.totalMessages)} label="messages" />
-        <StatItem value={formatCost(stats.estimatedCostUSD)} label="API list est." />
       </div>
 
       {/* Token breakdown progress bar */}
