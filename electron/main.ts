@@ -76,8 +76,16 @@ function toggleWindow() {
   } else {
     const pos = getWindowPosition()
     mainWindow.setPosition(pos.x, pos.y, false)
+    // On macOS with dock hidden, need alwaysOnTop to ensure window appears
+    if (process.platform === 'darwin') {
+      mainWindow.setAlwaysOnTop(true, 'pop-up-menu')
+    }
     mainWindow.show()
     mainWindow.focus()
+    if (process.platform === 'darwin') {
+      // Release alwaysOnTop after it's visible so blur still works
+      setTimeout(() => mainWindow?.setAlwaysOnTop(false), 200)
+    }
   }
 }
 
