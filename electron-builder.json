@@ -1,0 +1,24 @@
+{
+  "appId": "com.termtracker.app",
+  "productName": "TermTracker",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "dist-electron/**/*",
+    "!dist/win-unpacked",
+    "!dist/*.exe",
+    "!dist/*.blockmap"
+  ],
+  "win": {
+    "target": "nsis"
+  },
+  "mac": {
+    "target": "dmg"
+  },
+  "nsis": {
+    "oneClick": true,
+    "perMachine": false
+  }
+}

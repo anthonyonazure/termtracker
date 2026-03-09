@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "start": "vite build && start.cmd",
-    "build": "tsc && vite build && electron-builder",
+    "build": "tsc && vite build && electron-builder --config electron-builder.json",
     "build:vite": "tsc && vite build",
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
