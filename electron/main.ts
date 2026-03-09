@@ -76,14 +76,28 @@ function getWindowPosition() {
 
 function toggleWindow() {
   if (!mainWindow) return
+  console.log('toggleWindow called, visible:', mainWindow.isVisible())
   if (mainWindow.isVisible()) {
     mainWindow.hide()
   } else {
-    const pos = getWindowPosition()
-    mainWindow.setPosition(pos.x, pos.y, false)
     lastShowTime = Date.now()
-    mainWindow.show()
-    mainWindow.focus()
+    if (process.platform === 'darwin') {
+      // On macOS, center on screen first to verify window works at all
+      mainWindow.center()
+      mainWindow.showInactive()
+      // Then try to bring it forward
+      setTimeout(() => {
+        if (!mainWindow) return
+        mainWindow.show()
+        mainWindow.focus()
+        console.log('window should be visible now, bounds:', mainWindow.getBounds())
+      }, 100)
+    } else {
+      const pos = getWindowPosition()
+      mainWindow.setPosition(pos.x, pos.y, false)
+      mainWindow.show()
+      mainWindow.focus()
+    }
   }
 }
 
