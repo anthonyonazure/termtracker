@@ -39,12 +39,14 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
-  // Hide when clicking outside — but not if we just showed the window
-  mainWindow.on('blur', () => {
-    if (mainWindow && !mainWindow.isDestroyed() && Date.now() - lastShowTime > 500) {
-      mainWindow.hide()
-    }
-  })
+  // Hide when clicking outside (Windows only — on macOS blur races with tray click)
+  if (process.platform !== 'darwin') {
+    mainWindow.on('blur', () => {
+      if (mainWindow && !mainWindow.isDestroyed() && Date.now() - lastShowTime > 500) {
+        mainWindow.hide()
+      }
+    })
+  }
 }
 
 function getWindowPosition() {
