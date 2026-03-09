@@ -166,36 +166,17 @@ function createTray() {
   tray = new Tray(icon)
   tray.setToolTip('TermTracker — Claude Code Usage')
 
-  if (process.platform === 'darwin') {
-    // macOS: click events are unreliable with dock hidden.
-    // Use a native context menu instead — clicking the menu bar icon
-    // always opens this menu reliably.
-    const buildMenu = () => Menu.buildFromTemplate([
-      {
-        label: mainWindow?.isVisible() ? 'Hide' : 'Show TermTracker',
-        click: () => toggleWindow(),
-      },
-      { type: 'separator' },
-      { label: 'Refresh', click: () => mainWindow?.webContents.send('refresh') },
+  tray.on('click', () => toggleWindow())
+  tray.on('double-click', () => toggleWindow())
+
+  tray.on('right-click', () => {
+    const contextMenu = Menu.buildFromTemplate([
+      { label: 'Show', click: () => toggleWindow() },
       { type: 'separator' },
       { label: 'Quit', click: () => app.quit() },
     ])
-    tray.setContextMenu(buildMenu())
-    // Rebuild menu on show/hide to update label
-    setInterval(() => tray?.setContextMenu(buildMenu()), 1000)
-  } else {
-    // Windows: click to toggle works fine
-    tray.on('click', () => toggleWindow())
-    tray.on('double-click', () => toggleWindow())
-    tray.on('right-click', () => {
-      const contextMenu = Menu.buildFromTemplate([
-        { label: 'Show', click: () => toggleWindow() },
-        { type: 'separator' },
-        { label: 'Quit', click: () => app.quit() },
-      ])
-      tray!.popUpContextMenu(contextMenu)
-    })
-  }
+    tray!.popUpContextMenu(contextMenu)
+  })
 }
 
 app.whenReady().then(() => {
@@ -203,10 +184,6 @@ app.whenReady().then(() => {
   createWindow()
   createTray()
   startThrottleWatcher()
-  // Hide dock icon on macOS after tray is set up
-  if (process.platform === 'darwin' && app.dock) {
-    app.dock.hide()
-  }
   console.log('TermTracker ready — click the menu bar icon')
 })
 

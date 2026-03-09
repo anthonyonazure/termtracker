@@ -95,29 +95,35 @@ export function CostsTab({ dailyStats, modelUsage, projects, totalCost }: Props)
 
   return (
     <div className="mt-3 space-y-2.5">
+      {/* Disclaimer */}
+      <div className="rounded-lg px-3 py-2 text-[10px] text-gray-500" style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
+        <strong className="text-gray-400">API list prices</strong> — what your usage would cost at pay-per-token rates.
+        Your actual cost is your subscription fee.
+      </div>
+
       {/* Summary */}
       <div className="card">
         <div className="grid grid-cols-3 gap-3">
           <div className="text-center">
             <div className="text-lg font-bold text-white">{formatCost(totalCost)}</div>
-            <div className="text-[10px] text-gray-500">all-time est.</div>
+            <div className="text-[10px] text-gray-500">all-time API value</div>
           </div>
           <div className="text-center">
             <div className="text-lg font-bold text-white">{formatCost(monthCost)}</div>
-            <div className="text-[10px] text-gray-500">this month</div>
+            <div className="text-[10px] text-gray-500">this month API value</div>
           </div>
           <div className="text-center">
             <div className="text-lg font-bold text-white">
               {formatCost(monthStats.length > 0 ? monthCost / monthStats.filter((d) => d.messageCount > 0).length || 0 : 0)}
             </div>
-            <div className="text-[10px] text-gray-500">daily avg</div>
+            <div className="text-[10px] text-gray-500">daily avg API value</div>
           </div>
         </div>
       </div>
 
       {/* Daily spend chart */}
       <div className="card">
-        <div className="text-xs text-gray-400 font-medium mb-2">Daily Spend (14d)</div>
+        <div className="text-xs text-gray-400 font-medium mb-2">Daily API Value (14d)</div>
         <div className="h-28">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={dailyCostData} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
