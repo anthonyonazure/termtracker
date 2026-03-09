@@ -176,11 +176,15 @@ function createTray() {
 }
 
 app.whenReady().then(() => {
+  // Hide Dock icon on macOS — menu bar only
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.hide()
+  }
   registerDataHandlers()
   createWindow()
   createTray()
   startThrottleWatcher()
-  console.log('TermTracker ready — click the tray icon')
+  console.log('TermTracker ready — click the menu bar icon')
 })
 
 app.on('window-all-closed', (e: Event) => {
