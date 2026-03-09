@@ -17,6 +17,7 @@ interface ThrottleEvent {
 
 const WATCH_INTERVAL_MS = 15_000 // Check every 15 seconds
 const COOLDOWN_MS = 5 * 60 * 1000 // Don't re-notify for 5 minutes
+const MAX_READ_BYTES = 1024 * 1024 // Cap at 1MB per read to prevent OOM
 
 let watchTimer: ReturnType<typeof setInterval> | null = null
 let lastNotifiedAt = 0
@@ -66,14 +67,15 @@ function checkFileForThrottle(filePath: string): ThrottleEvent | null {
 
     if (stat.size <= prevPos) return null
 
-    // Read only the new portion of the file
+    // Read only the new portion of the file, capped to prevent OOM
     const fd = fs.openSync(filePath, 'r')
-    const newSize = stat.size - prevPos
+    const newSize = Math.min(stat.size - prevPos, MAX_READ_BYTES)
     const buffer = Buffer.alloc(newSize)
     fs.readSync(fd, buffer, 0, newSize, prevPos)
     fs.closeSync(fd)
 
-    filePositions.set(filePath, stat.size)
+    // Advance position by what we actually read (may be less than full delta if capped)
+    filePositions.set(filePath, prevPos + newSize)
 
     const newContent = buffer.toString('utf-8')
     const lines = newContent.split('\n')

@@ -91,6 +91,14 @@ function emptyTokens(): TokenUsage {
   return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
 }
 
+// Sanitize keys from untrusted JSON to prevent prototype pollution
+function safeKey(key: string): string {
+  if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+    return '_sanitized_' + key
+  }
+  return key
+}
+
 function addTokens(a: TokenUsage, b: TokenUsage): TokenUsage {
   return {
     inputTokens: a.inputTokens + b.inputTokens,
@@ -240,10 +248,10 @@ function computeStats(): OverallStats {
   const claudeDir = getClaudeDir()
   const jsonlFiles = findAllJSONLFiles(claudeDir)
 
-  const modelUsage: Record<string, TokenUsage> = {}
-  const dailyMap: Record<string, DailyStats> = {}
-  const sessionsByDay: Record<string, Set<string>> = {}
-  const hourCounts: Record<number, number> = {}
+  const modelUsage: Record<string, TokenUsage> = Object.create(null)
+  const dailyMap: Record<string, DailyStats> = Object.create(null)
+  const sessionsByDay: Record<string, Set<string>> = Object.create(null)
+  const hourCounts: Record<number, number> = Object.create(null)
   let totalMessages = 0
   let totalToolCalls = 0
   let firstDate = ''
@@ -259,7 +267,7 @@ function computeStats(): OverallStats {
     tokens: TokenUsage
     models: Set<string>
     costUSD: number
-  }> = {}
+  }> = Object.create(null)
 
   // Project-level tracking
   const projectMap: Record<string, {
@@ -270,7 +278,7 @@ function computeStats(): OverallStats {
     tokens: TokenUsage
     costUSD: number
     lastActive: string
-  }> = {}
+  }> = Object.create(null)
 
   for (const { filePath, projectFolder } of jsonlFiles) {
     const messages = parseJSONLFile(filePath, projectFolder)
@@ -281,7 +289,7 @@ function computeStats(): OverallStats {
 
       if (!firstDate || date < firstDate) firstDate = date
 
-      const sid = msg.sessionId || filePath
+      const sid = safeKey(msg.sessionId || filePath)
       if (!sessionsByDay[date]) sessionsByDay[date] = new Set()
       sessionsByDay[date].add(sid)
 
@@ -305,7 +313,7 @@ function computeStats(): OverallStats {
       session.messageCount++
 
       // Initialize project
-      const projKey = session.project
+      const projKey = safeKey(session.project)
       if (!projectMap[projKey]) {
         projectMap[projKey] = {
           project: projKey,
@@ -330,7 +338,7 @@ function computeStats(): OverallStats {
           sessionCount: 0,
           toolCallCount: 0,
           tokens: emptyTokens(),
-          modelBreakdown: {},
+          modelBreakdown: Object.create(null),
         }
       }
 
@@ -339,7 +347,7 @@ function computeStats(): OverallStats {
       totalMessages++
 
       if (msg.type === 'assistant' && msg.usage) {
-        const model = msg.model
+        const model = safeKey(msg.model)
         const msgCost = estimateTokenCost(model, msg.usage)
 
         if (!modelUsage[model]) modelUsage[model] = emptyTokens()
@@ -436,15 +444,27 @@ function computeStats(): OverallStats {
 
 let cachedStats: OverallStats | null = null
 
+function isValidSender(event: Electron.IpcMainInvokeEvent): boolean {
+  try {
+    const url = event.senderFrame?.url || ''
+    // Allow local files (production) and localhost dev server
+    return url.startsWith('file://') || url.startsWith('http://localhost:')
+  } catch {
+    return false
+  }
+}
+
 export function registerDataHandlers() {
-  ipcMain.handle('load-stats', async () => {
+  ipcMain.handle('load-stats', async (event) => {
+    if (!isValidSender(event)) return null
     if (!cachedStats) {
       cachedStats = computeStats()
     }
     return cachedStats
   })
 
-  ipcMain.handle('refresh-stats', async () => {
+  ipcMain.handle('refresh-stats', async (event) => {
+    if (!isValidSender(event)) return null
     cachedStats = computeStats()
     return cachedStats
   })
