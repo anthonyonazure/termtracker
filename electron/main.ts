@@ -1,4 +1,4 @@
-import { app, ipcMain, nativeImage, screen } from 'electron'
+import { app, ipcMain, Menu, nativeImage, screen } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { menubar } from 'menubar'
@@ -83,7 +83,7 @@ function createWinIcon(pctCycle: number): nativeImage {
   // 16x16 circular gauge icon for Windows notification area
   const size = 16
   const buf = Buffer.alloc(size * size * 4, 0)
-  const R = 0xe8, G = 0x76, B = 0x3a // brand orange
+  const R = 0xff, G = 0xff, B = 0xff // white — visible on both dark and light taskbars
 
   function px(x: number, y: number, a: number) {
     if (x < 0 || x >= size || y < 0 || y >= size) return
@@ -131,8 +131,22 @@ function createIcon(pct5h: number, pctCycle: number): nativeImage {
 
 // ─── Stats helpers ───
 
+// Cache stats so we don't re-parse all JSONL files on every call
+let _statsCache: ReturnType<typeof computeStats> | null = null
+let _statsCacheTime = 0
+const STATS_CACHE_MS = 30_000 // 30 seconds
+
+function getCachedStats() {
+  const now = Date.now()
+  if (!_statsCache || now - _statsCacheTime > STATS_CACHE_MS) {
+    _statsCache = computeStats()
+    _statsCacheTime = now
+  }
+  return _statsCache
+}
+
 function getCycleOutputTokens(billingDay: number = 1): number {
-  const stats = computeStats()
+  const stats = getCachedStats()
   const now = new Date()
   let cycleStart: Date
   if (now.getDate() >= billingDay) {
@@ -149,7 +163,7 @@ function getCycleOutputTokens(billingDay: number = 1): number {
 }
 
 function get5hOutputPercent(): number {
-  const stats = computeStats()
+  const stats = getCachedStats()
   const todayStr = new Date().toISOString().slice(0, 10)
   const todayStats = stats.dailyStats.find(d => d.date === todayStr)
   if (!todayStats) return 0
@@ -190,7 +204,6 @@ const mb = menubar({
   tooltip: 'TermTracker — Claude Code Usage',
   preloadWindow: true,
   showDockIcon: false,
-  windowPosition: isMac ? 'trayCenter' : 'trayBottomCenter',
   browserWindow: {
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
@@ -207,17 +220,21 @@ const mb = menubar({
   },
 })
 
-// Position window on Windows: bottom-right above taskbar
+// On Windows, position the window bottom-right above the taskbar
 function positionWindowWin() {
-  if (!isMac && mb.window && !mb.window.isDestroyed()) {
-    const display = screen.getPrimaryDisplay()
-    const workArea = display.workArea
-    mb.window.setPosition(
-      workArea.x + workArea.width - WINDOW_WIDTH - 12,
-      workArea.y + workArea.height - WINDOW_HEIGHT - 12
-    )
-  }
+  if (isMac || !mb.window || mb.window.isDestroyed()) return
+  const display = screen.getPrimaryDisplay()
+  const workArea = display.workArea
+  const x = workArea.x + workArea.width - WINDOW_WIDTH - 8
+  const y = workArea.y + workArea.height - WINDOW_HEIGHT - 8
+  mb.window.setPosition(Math.max(workArea.x, x), y)
 }
+
+// Position immediately on show, and again after a tick (menubar sometimes repositions)
+mb.on('show', () => {
+  positionWindowWin()
+  setTimeout(positionWindowWin, 50)
+})
 
 function updateTray() {
   try {
@@ -244,49 +261,24 @@ mb.on('ready', () => {
     return enabled
   })
 
-  // On Windows, bypass menubar's flaky click handling — directly toggle on click
-  if (!isMac) {
-    mb.tray.removeAllListeners('click')
-    mb.tray.on('click', () => {
-      if (!mb.window || mb.window.isDestroyed()) return
-      if (mb.window.isVisible()) {
-        mb.window.hide()
-      } else {
-        positionWindowWin()
-        mb.window.show()
-        mb.window.focus()
-      }
-    })
-    mb.tray.on('right-click', () => {
-      const { Menu } = require('electron')
-      Menu.buildFromTemplate([
-        { label: 'Show', click: () => { positionWindowWin(); mb.showWindow() } },
-        { type: 'separator' },
-        { label: 'Quit', click: () => app.quit() },
-      ]).popup()
-    })
-  }
+  // Initial tray update
+  updateTray()
 
-  setTimeout(updateTray, 500)
+  // Refresh every 60 seconds
   setInterval(updateTray, 60_000)
 
   console.log('TermTracker ready — click the tray icon')
 })
 
 mb.on('after-create-window', () => {
-  // macOS right-click menu (Windows handled above)
-  if (isMac) {
-    mb.tray.on('right-click', () => {
-      const { Menu } = require('electron')
-      Menu.buildFromTemplate([
-        { label: 'Show', click: () => mb.showWindow() },
-        { type: 'separator' },
-        { label: 'Quit', click: () => app.quit() },
-      ]).popup()
-    })
-  }
-  // Position on first create for Windows
-  positionWindowWin()
+  // Right-click context menu (both platforms)
+  mb.tray.on('right-click', () => {
+    Menu.buildFromTemplate([
+      { label: 'Show', click: () => mb.showWindow() },
+      { type: 'separator' },
+      { label: 'Quit', click: () => app.quit() },
+    ]).popup()
+  })
 })
 
 app.on('window-all-closed', (e: Event) => {
