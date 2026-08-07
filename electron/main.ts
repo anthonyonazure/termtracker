@@ -1,4 +1,4 @@
-import { app, ipcMain, Menu, nativeImage, screen } from 'electron'
+import { app, ipcMain, Menu, nativeImage, screen, type NativeImage } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { menubar } from 'menubar'
@@ -23,7 +23,7 @@ const FONT: Record<string, number[][]> = {
   'd': [[0,0,1],[0,0,1],[1,1,1],[1,0,1],[1,1,1]],
 }
 
-function createMacIcon(pct5h: number, pctCycle: number): nativeImage {
+function createMacIcon(pct5h: number, pctCycle: number): NativeImage {
   const scale = 2 // @2x retina
   const LW = 42, LH = 18
   const w = LW * scale, h = LH * scale
@@ -79,7 +79,7 @@ function createMacIcon(pct5h: number, pctCycle: number): nativeImage {
   return img
 }
 
-function createWinIcon(pctCycle: number): nativeImage {
+function createWinIcon(pctCycle: number): NativeImage {
   // 16x16 circular gauge icon for Windows notification area
   const size = 16
   const buf = Buffer.alloc(size * size * 4, 0)
@@ -125,7 +125,7 @@ function createWinIcon(pctCycle: number): nativeImage {
   return nativeImage.createFromBuffer(buf, { width: size, height: size })
 }
 
-function createIcon(pct5h: number, pctCycle: number): nativeImage {
+function createIcon(pct5h: number, pctCycle: number): NativeImage {
   return isMac ? createMacIcon(pct5h, pctCycle) : createWinIcon(pctCycle)
 }
 
@@ -246,7 +246,10 @@ function updateTray() {
     mb.tray.setImage(createIcon(pct5h, cyclePct))
     mb.tray.setTitle('')
     mb.tray.setToolTip(`TermTracker — ${shortTokens(cycleOutput)} / ${shortTokens(OUTPUT_LIMIT)} output (${Math.round(cyclePct)}%) — ${daysLeft}d left`)
-  } catch {}
+  } catch {
+    // A tray redraw that fails (icon encode, tray torn down mid-update) must
+    // not take the app down; the next 60s tick will try again.
+  }
 }
 
 mb.on('ready', () => {
@@ -274,13 +277,17 @@ mb.on('after-create-window', () => {
   // Right-click context menu (both platforms)
   mb.tray.on('right-click', () => {
     Menu.buildFromTemplate([
-      { label: 'Show', click: () => mb.showWindow() },
+      { label: 'Show', click: () => void mb.showWindow() },
       { type: 'separator' },
       { label: 'Quit', click: () => app.quit() },
     ]).popup()
   })
 })
 
-app.on('window-all-closed', (e: Event) => {
-  e.preventDefault()
+// Electron quits when the last window closes ONLY if nothing is subscribed to
+// this event. TermTracker lives in the tray, so an empty subscriber is what
+// keeps it resident. (The old body called preventDefault on an event Electron
+// never passes to this listener, so it did nothing.)
+app.on('window-all-closed', () => {
+  /* tray app: stay resident with no windows open */
 })

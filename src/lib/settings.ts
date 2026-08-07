@@ -36,10 +36,13 @@ export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw)
+      const parsed = JSON.parse(raw) as Partial<Settings>
       return { ...DEFAULTS, ...parsed }
     }
-  } catch {}
+  } catch {
+    // Corrupt or unreadable localStorage: fall through to defaults rather than
+    // leaving the app with no settings at all.
+  }
   return { ...DEFAULTS }
 }
 

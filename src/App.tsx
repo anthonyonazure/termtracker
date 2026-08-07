@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Header } from './components/Header'
+import { Header, type Tab } from './components/Header'
 import { OverviewCard } from './components/OverviewCard'
 import { TodayCard } from './components/TodayCard'
 import { TrendChart } from './components/TrendChart'
@@ -9,63 +9,7 @@ import { SessionsTab } from './components/SessionsTab'
 import { CostsTab } from './components/CostsTab'
 import { SettingsPanel } from './components/SettingsPanel'
 import { type Settings, loadSettings, getActivePlan } from './lib/settings'
-
-type Tab = 'usage' | 'sessions' | 'costs'
-
-interface ThrottleEvent {
-  timestamp: string
-  model: string
-  serviceTier: string
-  project: string
-}
-
-interface TokenUsage {
-  inputTokens: number
-  outputTokens: number
-  cacheReadTokens: number
-  cacheWriteTokens: number
-}
-
-interface OverallStats {
-  totalTokens: TokenUsage
-  totalMessages: number
-  totalSessions: number
-  totalToolCalls: number
-  estimatedCostUSD: number
-  modelUsage: Record<string, TokenUsage>
-  dailyStats: Array<{
-    date: string
-    messageCount: number
-    sessionCount: number
-    toolCallCount: number
-    tokens: TokenUsage
-    modelBreakdown: Record<string, TokenUsage>
-  }>
-  hourlyActivity: Record<number, number>
-  firstSessionDate: string
-  subscription: string
-  sessions: Array<{
-    sessionId: string
-    project: string
-    startTime: string
-    endTime: string
-    messageCount: number
-    toolCallCount: number
-    tokens: TokenUsage
-    models: string[]
-    costUSD: number
-  }>
-  projects: Array<{
-    project: string
-    displayName: string
-    sessionCount: number
-    messageCount: number
-    toolCallCount: number
-    tokens: TokenUsage
-    costUSD: number
-    lastActive: string
-  }>
-}
+import { electronAPI, type OverallStats, type ThrottleEvent } from './lib/ipc'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('usage')
@@ -76,23 +20,19 @@ export default function App() {
   const [throttle, setThrottle] = useState<ThrottleEvent | null>(null)
 
   useEffect(() => {
-    loadData()
+    void loadData()
 
     // Listen for throttle events from main process
-    const api = (window as any).electronAPI
-    if (api?.onThrottleDetected) {
-      api.onThrottleDetected((event: ThrottleEvent) => {
-        setThrottle(event)
-        // Auto-dismiss after 60 seconds
-        setTimeout(() => setThrottle(null), 60000)
-      })
-    }
+    electronAPI()?.onThrottleDetected((event) => {
+      setThrottle(event)
+      // Auto-dismiss after 60 seconds
+      setTimeout(() => setThrottle(null), 60000)
+    })
   }, [])
 
   async function loadData() {
     try {
-      const data = await (window as any).electronAPI.loadStats()
-      setStats(data)
+      setStats((await electronAPI()?.loadStats()) ?? null)
     } catch (err) {
       console.error('Failed to load stats:', err)
     } finally {
@@ -103,8 +43,7 @@ export default function App() {
   async function refresh() {
     setLoading(true)
     try {
-      const data = await (window as any).electronAPI.refreshStats()
-      setStats(data)
+      setStats((await electronAPI()?.refreshStats()) ?? null)
     } catch (err) {
       console.error('Failed to refresh:', err)
     } finally {
@@ -164,7 +103,7 @@ export default function App() {
       <Header
         tab={tab}
         onTabChange={setTab}
-        onRefresh={refresh}
+        onRefresh={() => void refresh()}
         onSettings={() => setShowSettings(true)}
       />
 

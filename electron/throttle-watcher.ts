@@ -7,6 +7,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { Notification, BrowserWindow } from 'electron'
+import { parseLine, prop, str } from '../src/lib/json'
 
 interface ThrottleEvent {
   timestamp: string
@@ -21,7 +22,7 @@ const MAX_READ_BYTES = 1024 * 1024 // Cap at 1MB per read to prevent OOM
 
 let watchTimer: ReturnType<typeof setInterval> | null = null
 let lastNotifiedAt = 0
-let filePositions: Map<string, number> = new Map()
+const filePositions = new Map<string, number>()
 
 function getProjectsDir(): string {
   return path.join(os.homedir(), '.claude', 'projects')
@@ -49,12 +50,19 @@ function findActiveJSONLFiles(): string[] {
               if (Date.now() - stat.mtimeMs < 3600000) {
                 files.push({ path: filePath, mtime: stat.mtimeMs })
               }
-            } catch {}
+            } catch {
+              // File vanished between readdir and stat (Claude Code rotating
+              // logs): just leave it out of this pass.
+            }
           }
         }
-      } catch {}
+      } catch {
+        // Unreadable project folder: skip it, keep watching the rest.
+      }
     }
-  } catch {}
+  } catch {
+    // No readable projects dir: nothing to watch this pass.
+  }
 
   // Return most recently modified files first
   return files.sort((a, b) => b.mtime - a.mtime).map((f) => f.path)
@@ -82,26 +90,29 @@ function checkFileForThrottle(filePath: string): ThrottleEvent | null {
 
     for (const line of lines) {
       if (!line.trim()) continue
-      try {
-        const obj = JSON.parse(line)
-        if (obj.type === 'assistant' && obj.message) {
-          const serviceTier = obj.message.service_tier || obj.service_tier
+      {
+        const obj = parseLine(line)
+        if (str(obj, 'type') === 'assistant' && prop(obj, 'message')) {
+          const serviceTier = str(obj, 'message', 'service_tier') || str(obj, 'service_tier')
           if (serviceTier && serviceTier !== 'standard') {
             // Extract project name from parent folder
             const parts = filePath.replace(/\\/g, '/').split('/')
             const projectFolder = parts[parts.length - 2] || 'unknown'
 
             return {
-              timestamp: obj.timestamp || new Date().toISOString(),
-              model: obj.message.model || 'unknown',
+              timestamp: str(obj, 'timestamp') || new Date().toISOString(),
+              model: str(obj, 'message', 'model') || 'unknown',
               serviceTier,
               project: projectFolder,
             }
           }
         }
-      } catch {}
+      }
     }
-  } catch {}
+  } catch {
+    // Unreadable or truncated log: report no throttle rather than crashing the
+    // watcher, which would stop all future detection.
+  }
 
   return null
 }
@@ -138,7 +149,9 @@ function pollForThrottle() {
       try {
         const stat = fs.statSync(filePath)
         filePositions.set(filePath, stat.size)
-      } catch {}
+      } catch {
+        // Cannot size the file yet; try again next poll.
+      }
       continue
     }
 
@@ -159,7 +172,9 @@ export function startThrottleWatcher() {
     try {
       const stat = fs.statSync(filePath)
       filePositions.set(filePath, stat.size)
-    } catch {}
+    } catch {
+      // Cannot size the file yet; the first poll will pick it up.
+    }
   }
 
   watchTimer = setInterval(pollForThrottle, WATCH_INTERVAL_MS)

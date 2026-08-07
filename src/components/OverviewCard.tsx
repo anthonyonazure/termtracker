@@ -1,4 +1,4 @@
-import { formatTokens, formatCost, totalTokenCount } from '../lib/parser'
+import { formatTokens, totalTokenCount } from '../lib/parser'
 
 interface Props {
   stats: {

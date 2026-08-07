@@ -1,6 +1,9 @@
+/** The tabs Header renders, and therefore the only values it can emit. */
+export type Tab = 'usage' | 'sessions' | 'costs'
+
 interface HeaderProps {
-  tab: string
-  onTabChange: (tab: any) => void
+  tab: Tab
+  onTabChange: (tab: Tab) => void
   onRefresh: () => void
   onSettings?: () => void
 }

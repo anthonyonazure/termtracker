@@ -58,7 +58,7 @@ const STATUS_CONFIG: Record<BurnStatus, { color: string; bg: string; label: stri
   over: { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: 'Over budget', icon: '○' },
 }
 
-export function BillingCycle({ dailyStats, modelUsage, outputLimit, planLabel, billingDay }: Props) {
+export function BillingCycle({ dailyStats, modelUsage: _modelUsage, outputLimit, planLabel, billingDay }: Props) {
   const cycle = getBillingCycle(billingDay)
 
   // Current billing period stats
