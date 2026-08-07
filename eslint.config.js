@@ -5,11 +5,24 @@ export default tseslint.config(
   // root, so a nested build output (packages/*/dist, ticker/dist) was linted as
   // if it were source and buried the real findings under hundreds of errors
   // about generated code.
-  { ignores: ["**/dist/**", "**/build/**", "**/node_modules/**", "**/*.cjs"] },
+  { ignores: ["**/dist/**", "**/dist-electron/**", "**/build/**", "**/node_modules/**", "**/*.cjs"] },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
-    languageOptions: { parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname } },
+    // eslint.config.js / postcss.config.js / tailwind.config.js sit outside
+    // tsconfig's "include", so the project service cannot type them and reports
+    // a parsing error rather than a real finding. allowDefaultProject lints them
+    // with an inferred default program instead of failing the gate on a config
+    // quirk. Real source (electron/) is NOT routed through here — it was added
+    // to tsconfig include so it is genuinely type-checked.
+    languageOptions: {
+      parserOptions: {
+        projectService: {
+          allowDefaultProject: ["*.js", "*.mjs", "*.cjs", "*.ts", "*.config.js", "*.config.ts"],
+        },
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
     rules: {
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/no-misused-promises": "error",

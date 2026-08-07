@@ -3,6 +3,8 @@
  * Reads JSONL conversation files from ~/.claude/projects/ and extracts token usage
  */
 
+import { arr, count, parseLine, prop, str } from './json'
+
 export interface TokenUsage {
   inputTokens: number
   outputTokens: number
@@ -89,49 +91,35 @@ export function estimateTotalCost(modelUsage: Record<string, TokenUsage>): numbe
 }
 
 export function parseAssistantMessage(line: string): MessageRecord | null {
-  try {
-    const obj = JSON.parse(line)
-    if (obj.type !== 'assistant' || !obj.message?.usage) return null
+  const obj = parseLine(line)
+  const usage = prop(obj, 'message', 'usage')
+  if (str(obj, 'type') !== 'assistant' || !usage) return null
 
-    const usage = obj.message.usage
-    const model = obj.message.model || 'unknown'
+  const toolCalls = arr(obj, 'message', 'content').filter(
+    (c) => str(c, 'type') === 'tool_use'
+  ).length
 
-    // Count tool calls in content
-    let toolCalls = 0
-    if (Array.isArray(obj.message.content)) {
-      toolCalls = obj.message.content.filter(
-        (c: any) => c.type === 'tool_use'
-      ).length
-    }
-
-    return {
-      timestamp: obj.timestamp || '',
-      sessionId: obj.sessionId || '',
-      model,
-      usage: {
-        inputTokens: usage.input_tokens || 0,
-        outputTokens: usage.output_tokens || 0,
-        cacheReadTokens: usage.cache_read_input_tokens || 0,
-        cacheWriteTokens: usage.cache_creation_input_tokens || 0,
-      },
-      type: 'assistant',
-      toolCalls,
-    }
-  } catch {
-    return null
+  return {
+    timestamp: str(obj, 'timestamp'),
+    sessionId: str(obj, 'sessionId'),
+    model: str(obj, 'message', 'model') || 'unknown',
+    usage: {
+      inputTokens: count(usage, 'input_tokens'),
+      outputTokens: count(usage, 'output_tokens'),
+      cacheReadTokens: count(usage, 'cache_read_input_tokens'),
+      cacheWriteTokens: count(usage, 'cache_creation_input_tokens'),
+    },
+    type: 'assistant',
+    toolCalls,
   }
 }
 
 export function parseUserMessage(line: string): { timestamp: string; sessionId: string } | null {
-  try {
-    const obj = JSON.parse(line)
-    if (obj.type !== 'user') return null
-    return {
-      timestamp: obj.timestamp || '',
-      sessionId: obj.sessionId || '',
-    }
-  } catch {
-    return null
+  const obj = parseLine(line)
+  if (str(obj, 'type') !== 'user') return null
+  return {
+    timestamp: str(obj, 'timestamp'),
+    sessionId: str(obj, 'sessionId'),
   }
 }
 

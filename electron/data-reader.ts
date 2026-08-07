@@ -6,6 +6,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { ipcMain } from 'electron'
+import { arr, count, parseLine, prop, str } from '../src/lib/json'
 
 interface TokenUsage {
   inputTokens: number
@@ -108,10 +109,6 @@ function addTokens(a: TokenUsage, b: TokenUsage): TokenUsage {
   }
 }
 
-function totalTokenCount(t: TokenUsage): number {
-  return t.inputTokens + t.outputTokens + t.cacheReadTokens + t.cacheWriteTokens
-}
-
 function getClaudeDir(): string {
   return path.join(os.homedir(), '.claude')
 }
@@ -168,14 +165,17 @@ function findAllJSONLFiles(claudeDir: string): Array<{ filePath: string; project
           if (entry.isFile() && entry.name.endsWith('.jsonl') && !entry.name.startsWith('.')) {
             files.push({ filePath: path.join(pfPath, entry.name), projectFolder: pf.name })
           }
-          // Also check one level deeper (session subdirs that might have jsonl)
-          if (entry.isDirectory() && entry.name !== 'tool-results' && entry.name !== 'file-history' && entry.name !== 'memory') {
-            // Skip — session subdirs contain tool results, not conversation logs
-          }
+          // Subdirectories are deliberately not descended into: they hold
+          // tool results, file history and memory, not conversation logs.
         }
-      } catch {}
+      } catch {
+        // Unreadable project folder (permissions, races with Claude Code
+        // writing): skip it rather than losing every other project's data.
+      }
     }
-  } catch {}
+  } catch {
+    // No readable projects dir at all — report zero files, not a crash.
+  }
 
   return files
 }
@@ -190,95 +190,100 @@ function parseJSONLFile(filePath: string, projectFolder: string): ParsedMessage[
 
     for (const line of lines) {
       if (!line.trim()) continue
-      try {
-        const obj = JSON.parse(line)
+      const obj = parseLine(line)
 
-        // Capture project from cwd field if available
-        if (obj.cwd) {
-          fileProject = obj.cwd
-        }
+      // Capture project from cwd field if available
+      const cwd = str(obj, 'cwd')
+      if (cwd) fileProject = cwd
 
-        if (obj.type === 'assistant' && obj.message?.usage) {
-          const u = obj.message.usage
-          const model = obj.message.model || 'unknown'
+      const type = str(obj, 'type')
+      const usage = prop(obj, 'message', 'usage')
+      const timestamp = str(obj, 'timestamp')
 
-          let toolCalls = 0
-          if (Array.isArray(obj.message.content)) {
-            toolCalls = obj.message.content.filter((c: any) => c.type === 'tool_use').length
-          }
+      if (type === 'assistant' && usage) {
+        const toolCalls = arr(obj, 'message', 'content').filter(
+          (c) => str(c, 'type') === 'tool_use'
+        ).length
 
-          let hour = 0
-          try { hour = new Date(obj.timestamp).getHours() } catch {}
+        // An unparseable timestamp yields NaN from getHours(), which would
+        // corrupt the hourly histogram, so fall back to hour 0.
+        const parsedHour = new Date(timestamp).getHours()
+        const hour = Number.isFinite(parsedHour) ? parsedHour : 0
 
-          messages.push({
-            timestamp: obj.timestamp || '',
-            sessionId: obj.sessionId || '',
-            model,
-            usage: {
-              inputTokens: u.input_tokens || 0,
-              outputTokens: u.output_tokens || 0,
-              cacheReadTokens: u.cache_read_input_tokens || 0,
-              cacheWriteTokens: u.cache_creation_input_tokens || 0,
-            },
-            type: 'assistant',
-            toolCalls,
-            hour,
-            project: fileProject,
-          })
-        } else if (obj.type === 'user' && obj.message) {
-          messages.push({
-            timestamp: obj.timestamp || '',
-            sessionId: obj.sessionId || '',
-            model: '',
-            usage: null,
-            type: 'user',
-            toolCalls: 0,
-            hour: 0,
-            project: fileProject,
-          })
-        }
-      } catch {}
+        messages.push({
+          timestamp,
+          sessionId: str(obj, 'sessionId'),
+          model: str(obj, 'message', 'model') || 'unknown',
+          usage: {
+            inputTokens: count(usage, 'input_tokens'),
+            outputTokens: count(usage, 'output_tokens'),
+            cacheReadTokens: count(usage, 'cache_read_input_tokens'),
+            cacheWriteTokens: count(usage, 'cache_creation_input_tokens'),
+          },
+          type: 'assistant',
+          toolCalls,
+          hour,
+          project: fileProject,
+        })
+      } else if (type === 'user' && prop(obj, 'message')) {
+        messages.push({
+          timestamp,
+          sessionId: str(obj, 'sessionId'),
+          model: '',
+          usage: null,
+          type: 'user',
+          toolCalls: 0,
+          hour: 0,
+          project: fileProject,
+        })
+      }
     }
-  } catch {}
+  } catch {
+    // Unreadable log file: return whatever parsed before the failure.
+  }
 
   return messages
+}
+
+interface SessionAccumulator {
+  sessionId: string
+  project: string
+  startTime: string
+  endTime: string
+  messageCount: number
+  toolCallCount: number
+  tokens: TokenUsage
+  models: Set<string>
+  costUSD: number
+}
+
+interface ProjectAccumulator {
+  project: string
+  sessions: Set<string>
+  messageCount: number
+  toolCallCount: number
+  tokens: TokenUsage
+  costUSD: number
+  lastActive: string
 }
 
 function computeStats(): OverallStats {
   const claudeDir = getClaudeDir()
   const jsonlFiles = findAllJSONLFiles(claudeDir)
 
-  const modelUsage: Record<string, TokenUsage> = Object.create(null)
-  const dailyMap: Record<string, DailyStats> = Object.create(null)
-  const sessionsByDay: Record<string, Set<string>> = Object.create(null)
-  const hourCounts: Record<number, number> = Object.create(null)
+  const modelUsage: Record<string, TokenUsage> = Object.create(null) as Record<string, TokenUsage>
+  const dailyMap: Record<string, DailyStats> = Object.create(null) as Record<string, DailyStats>
+  const sessionsByDay: Record<string, Set<string>> = Object.create(null) as Record<string, Set<string>>
+  const hourCounts: Record<number, number> = Object.create(null) as Record<number, number>
   let totalMessages = 0
   let totalToolCalls = 0
   let firstDate = ''
 
   // Session-level tracking
-  const sessionMap: Record<string, {
-    sessionId: string
-    project: string
-    startTime: string
-    endTime: string
-    messageCount: number
-    toolCallCount: number
-    tokens: TokenUsage
-    models: Set<string>
-    costUSD: number
-  }> = Object.create(null)
+  const sessionMap: Record<string, SessionAccumulator> = Object.create(null) as Record<string, SessionAccumulator>
 
   // Project-level tracking
-  const projectMap: Record<string, {
-    project: string
-    sessions: Set<string>
-    messageCount: number
-    toolCallCount: number
-    tokens: TokenUsage
-    costUSD: number
-    lastActive: string
-  }> = Object.create(null)
+  const projectMap: Record<string, ProjectAccumulator> = Object.create(null) as Record<string, ProjectAccumulator>
 
   for (const { filePath, projectFolder } of jsonlFiles) {
     const messages = parseJSONLFile(filePath, projectFolder)
@@ -338,7 +343,7 @@ function computeStats(): OverallStats {
           sessionCount: 0,
           toolCallCount: 0,
           tokens: emptyTokens(),
-          modelBreakdown: Object.create(null),
+          modelBreakdown: Object.create(null) as Record<string, TokenUsage>,
         }
       }
 
@@ -458,7 +463,7 @@ function isValidSender(event: Electron.IpcMainInvokeEvent): boolean {
 }
 
 export function registerDataHandlers() {
-  ipcMain.handle('load-stats', async (event) => {
+  ipcMain.handle('load-stats', (event) => {
     if (!isValidSender(event)) return null
     if (!cachedStats) {
       cachedStats = computeStats()
@@ -466,7 +471,7 @@ export function registerDataHandlers() {
     return cachedStats
   })
 
-  ipcMain.handle('refresh-stats', async (event) => {
+  ipcMain.handle('refresh-stats', (event) => {
     if (!isValidSender(event)) return null
     cachedStats = computeStats()
     return cachedStats

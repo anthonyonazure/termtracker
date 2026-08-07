@@ -2,6 +2,16 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recha
 import { formatTokens, totalTokenCount, formatModelName } from '../lib/parser'
 import { loadSettings, getActivePlan } from '../lib/settings'
 
+/**
+ * The slice of Recharts' tooltip payload these charts actually read. Recharts
+ * types the callback argument as any; naming the one field we use means a
+ * renamed data key becomes a type error instead of a blank tooltip.
+ */
+interface TooltipPayload {
+  payload?: { date?: string }
+}
+
+
 interface TokenUsage {
   inputTokens: number
   outputTokens: number
@@ -163,18 +173,18 @@ export function CostsTab({ dailyStats, modelUsage, projects }: Props) {
                 tick={{ fontSize: 9, fill: '#444' }}
                 axisLine={false}
                 tickLine={false}
-                tickFormatter={(v) => formatTokens(v)}
+                tickFormatter={(v: number) => formatTokens(v)}
               />
               <Tooltip
                 contentStyle={{ background: '#333', border: 'none', borderRadius: 8, fontSize: 11, color: '#fff' }}
-                formatter={(value: any) => [formatTokens(Number(value)), 'Output']}
-                labelFormatter={(_: any, payload: any) => {
-                  if (payload?.[0]?.payload?.date) {
-                    return new Date(payload[0].payload.date + 'T12:00:00').toLocaleDateString('en-US', {
-                      weekday: 'short', month: 'short', day: 'numeric',
-                    })
-                  }
-                  return ''
+                formatter={(value: number) => [formatTokens(Number(value)), 'Output']}
+                labelFormatter={(_label: string, payload: TooltipPayload[]) => {
+                  const date = payload[0]?.payload?.date
+                  return date
+                    ? new Date(date + 'T12:00:00').toLocaleDateString('en-US', {
+                        weekday: 'short', month: 'short', day: 'numeric',
+                      })
+                    : ''
                 }}
               />
               <Bar dataKey="output" fill="#e8763a" radius={[3, 3, 0, 0]} barSize={20} />

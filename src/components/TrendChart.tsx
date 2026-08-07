@@ -1,5 +1,15 @@
-import { BarChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart } from 'recharts'
+import { Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart } from 'recharts'
 import { formatTokens, totalTokenCount } from '../lib/parser'
+
+/**
+ * The slice of Recharts' tooltip payload these charts actually read. Recharts
+ * types the callback argument as any; naming the one field we use means a
+ * renamed data key becomes a type error instead of a blank tooltip.
+ */
+interface TooltipPayload {
+  payload?: { date?: string }
+}
+
 
 interface TokenUsage {
   inputTokens: number
@@ -78,7 +88,7 @@ export function TrendChart({ dailyStats }: Props) {
               tick={{ fontSize: 9, fill: '#444' }}
               axisLine={false}
               tickLine={false}
-              tickFormatter={(v) => formatTokens(v)}
+              tickFormatter={(v: number) => formatTokens(v)}
             />
             <YAxis
               yAxisId="tokens"
@@ -95,19 +105,19 @@ export function TrendChart({ dailyStats }: Props) {
                 fontSize: 11,
                 color: '#fff',
               }}
-              formatter={(value: any, name: any) => [
+              formatter={(value: number, name: string) => [
                 name === 'messages' ? value.toLocaleString() : formatTokens(value),
                 name === 'messages' ? 'Messages' : 'Tokens',
               ]}
-              labelFormatter={(label: any, payload: any) => {
-                if (payload?.[0]?.payload?.date) {
-                  return new Date(payload[0].payload.date + 'T12:00:00').toLocaleDateString('en-US', {
-                    weekday: 'short',
-                    month: 'short',
-                    day: 'numeric',
-                  })
-                }
-                return label
+              labelFormatter={(label: string, payload: TooltipPayload[]) => {
+                const date = payload[0]?.payload?.date
+                return date
+                  ? new Date(date + 'T12:00:00').toLocaleDateString('en-US', {
+                      weekday: 'short',
+                      month: 'short',
+                      day: 'numeric',
+                    })
+                  : label
               }}
             />
             <Bar yAxisId="msgs" dataKey="messages" fill="#e8763a" radius={[3, 3, 0, 0]} barSize={20} />

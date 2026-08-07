@@ -1,12 +1,10 @@
 /// <reference types="vite/client" />
 
-interface ElectronAPI {
-  platform: string
-  homedir: string
-  loadStats: () => Promise<any>
-  refreshStats: () => Promise<any>
-}
+import type { ElectronAPI } from './lib/ipc'
 
-interface Window {
-  electronAPI: ElectronAPI
+declare global {
+  interface Window {
+    // Absent outside Electron (plain `vite dev` in a browser), hence optional.
+    electronAPI?: ElectronAPI
+  }
 }

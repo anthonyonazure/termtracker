@@ -20,8 +20,6 @@ export function SettingsPanel({ onClose, onSave }: Props) {
     onClose()
   }
 
-  const selectedPlan = PLAN_TIERS.find((p) => p.id === settings.planId)
-
   return (
     <div className="p-3">
       <div className="flex items-center justify-between mb-4">
